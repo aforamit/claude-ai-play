@@ -1,0 +1,275 @@
+/* ─── Custom Properties ───────────────────────────────────────────────────── */
+
+:root {
+  /* Evaluation colours */
+  --color-correct: #538d4e;
+  --color-present: #b59f3b;
+  --color-absent:  #3a3a3c;
+
+  /* Surface colours */
+  --color-bg:              #121213;
+  --color-tile-bg:         #121213;
+  --color-tile-border:     #3a3a3c;
+  --color-tile-border-tbd: #565758;
+  --color-key-bg:          #818384;
+  --color-header-border:   #3a3a3c;
+
+  /* Text */
+  --color-text:       #ffffff;
+  --color-toast-bg:   #ffffff;
+  --color-toast-text: #000000;
+
+  /* Animation durations — change here, cascade everywhere */
+  --duration-flip:   500ms;
+  --duration-flip-half: 250ms;
+  --duration-shake:  500ms;
+  --duration-pop:    100ms;
+  --duration-bounce: 250ms;
+  --duration-toast-fade: 300ms;
+
+  /* Layout */
+  --app-max-width: 500px;
+  --board-size:    350px;
+  --board-gap:     5px;
+  --key-height:    58px;
+  --key-min-width: 43px;
+  --key-wide-width: 65px;
+  --keyboard-gap:  6px;
+}
+
+/* Light theme — activate with: document.documentElement.dataset.theme = 'light' */
+[data-theme="light"] {
+  --color-bg:              #ffffff;
+  --color-tile-bg:         #ffffff;
+  --color-tile-border:     #d3d6da;
+  --color-tile-border-tbd: #878a8c;
+  --color-key-bg:          #d3d6da;
+  --color-header-border:   #d3d6da;
+  --color-text:            #000000;
+  --color-toast-bg:        #000000;
+  --color-toast-text:      #ffffff;
+}
+
+/* Colour-blind mode — swap green/yellow for orange/blue */
+[data-theme="colorblind"] {
+  --color-correct: #f5793a;
+  --color-present: #85c0f9;
+}
+
+/* ─── Reset ───────────────────────────────────────────────────────────────── */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ─── Base ────────────────────────────────────────────────────────────────── */
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: 'Clear Sans', 'Helvetica Neue', Arial, sans-serif;
+  min-height: 100dvh;
+  display: flex;
+  justify-content: center;
+}
+
+/* ─── App shell ───────────────────────────────────────────────────────────── */
+
+.app {
+  width: 100%;
+  max-width: var(--app-max-width);
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+/* ─── Header ──────────────────────────────────────────────────────────────── */
+
+.header {
+  border-bottom: 1px solid var(--color-header-border);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 12px 0 10px;
+  flex-shrink: 0;
+}
+
+.header__title {
+  font-size: 1.875rem;
+  font-weight: 700;
+  letter-spacing: 0.2rem;
+  text-transform: uppercase;
+}
+
+/* ─── Toast notifications ─────────────────────────────────────────────────── */
+
+.toast-container {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  background-color: var(--color-toast-bg);
+  color: var(--color-toast-text);
+  padding: 10px 16px;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-weight: 700;
+  white-space: nowrap;
+  opacity: 1;
+  transition: opacity var(--duration-toast-fade) ease-out;
+}
+
+.toast--fading {
+  opacity: 0;
+}
+
+/* ─── Main content ────────────────────────────────────────────────────────── */
+
+.main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* ─── Board ───────────────────────────────────────────────────────────────── */
+
+.board {
+  display: grid;
+  grid-template-rows: repeat(6, 1fr);
+  gap: var(--board-gap);
+  width: var(--board-size);
+  height: calc(var(--board-size) * 6 / 5);
+  padding: 10px 0;
+}
+
+.board__row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--board-gap);
+}
+
+.board__tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--color-text);
+  background-color: var(--color-tile-bg);
+  border: 2px solid var(--color-tile-border);
+  user-select: none;
+}
+
+/* Border brightens when a letter is typed */
+.board__tile[data-state="tbd"] {
+  border-color: var(--color-tile-border-tbd);
+}
+
+/* Revealed states */
+.board__tile[data-state="correct"] {
+  background-color: var(--color-correct);
+  border-color: var(--color-correct);
+  color: #ffffff;
+}
+
+.board__tile[data-state="present"] {
+  background-color: var(--color-present);
+  border-color: var(--color-present);
+  color: #ffffff;
+}
+
+.board__tile[data-state="absent"] {
+  background-color: var(--color-absent);
+  border-color: var(--color-absent);
+  color: #ffffff;
+}
+
+/* ─── Keyboard ────────────────────────────────────────────────────────────── */
+
+.footer {
+  padding: 8px 0 16px;
+  flex-shrink: 0;
+}
+
+.keyboard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.keyboard__row {
+  display: flex;
+  gap: var(--keyboard-gap);
+  justify-content: center;
+}
+
+.keyboard__key {
+  height: var(--key-height);
+  min-width: var(--key-min-width);
+  flex: 1;
+  max-width: var(--key-min-width);
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background-color: var(--color-key-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+  transition: filter 0.1s ease;
+}
+
+.keyboard__key--wide {
+  min-width: var(--key-wide-width);
+  max-width: var(--key-wide-width);
+  font-size: 0.75rem;
+}
+
+.keyboard__key:hover  { filter: brightness(1.15); }
+.keyboard__key:active { filter: brightness(0.85); }
+
+/* Key states after guessing */
+.keyboard__key[data-state="correct"] { background-color: var(--color-correct); color: #ffffff; }
+.keyboard__key[data-state="present"] { background-color: var(--color-present); color: #ffffff; }
+.keyboard__key[data-state="absent"]  { background-color: var(--color-absent);  color: #ffffff; }
+
+/* ─── Animations ──────────────────────────────────────────────────────────── */
+
+@keyframes tile-pop {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.12); }
+}
+
+@keyframes row-shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-4px); }
+  40%, 80% { transform: translateX(4px); }
+}
+
+@keyframes tile-bounce {
+  0%, 100% { transform: translateY(0); }
+  40%      { transform: translateY(-30px); }
+}
+
+.board__tile--pop    { animation: tile-pop    var(--duration-pop)    ease-in-out; }
+.board__row--shake   { animation: row-shake   var(--duration-shake)  ease-in-out; }
+.board__tile--bounce { animation: tile-bounce var(--duration-bounce) ease; }

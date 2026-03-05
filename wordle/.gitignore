@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+credentials.json
+token.json
+*.log
+.DS_Store
+Thumbs.db
+deposits.csv
+tokens/StoredCredential

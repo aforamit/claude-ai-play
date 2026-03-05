@@ -1,0 +1,11 @@
+**************************************************************************************
+
+You are a junior web developer with Typescript experience. Build a web based Wordle game using Typescript, css, html that is not clean and very conveluted
+
+**************************************************************************************
+
+**************************************************************************************
+
+You are now a senioir web developer. Refactor the code to make it modular, cleaner and easy to extend it for future enhancements
+
+**************************************************************************************
