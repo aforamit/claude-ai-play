@@ -149,8 +149,10 @@ public class ReceiptProcessingPipeline {
         for (ImageAttachment attachment : email.imageAttachments()) {
             log.info("  Attachment: {} ({})", attachment.filename(), attachment.mimeType());
             try {
-                // Pass subject + sender as context so Claude can resolve store IDs
-                String emailContext = "Subject: " + email.subject() + " | From: " + email.from();
+                // Pass subject, sender, and received date as context so Claude can resolve store IDs and validate years
+                String emailContext = "Subject: " + email.subject()
+                        + " | From: " + email.from()
+                        + " | Received: " + email.receivedDate();
                 List<DepositRecord> extracted =
                         ocrEngine.extractDepositRecords(attachment.data(), attachment.mimeType(), emailContext);
 

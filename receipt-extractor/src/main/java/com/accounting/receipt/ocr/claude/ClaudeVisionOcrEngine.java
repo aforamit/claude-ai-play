@@ -24,6 +24,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.MonthDay;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -128,6 +129,12 @@ public class ClaudeVisionOcrEngine implements OcrEngine {
     /**
      * Compresses the image when its base64-encoded size would exceed the Claude API's 5 MB limit.
      * Base64 encoding inflates raw bytes by ~33%, so the threshold is ~3.7 MB of raw data.
+     *
+     * Strategy (two-pass):
+     *   Pass 1 — JPEG re-encode at high quality (0.92) with no downscaling.
+     *            Preserves full resolution; best text readability for OCR.
+     *   Pass 2 — If still over threshold, scale down proportionally and re-encode at 0.85.
+     *            Fallback for very large images where quality-only compression is insufficient.
      */
     private byte[] maybeCompress(byte[] imageData, String mimeType) throws Exception {
         if (imageData.length <= COMPRESS_THRESHOLD) {
@@ -143,7 +150,15 @@ public class ClaudeVisionOcrEngine implements OcrEngine {
             return imageData;
         }
 
-        // Scale proportionally so the compressed file stays within the threshold
+        // Pass 1: high-quality JPEG at full resolution (no downscaling)
+        byte[] pass1 = encodeJpeg(original, 0.92f);
+        if (pass1.length <= COMPRESS_THRESHOLD) {
+            log.info("Compressed {}KB → {}KB (quality-only, no downscale)", imageData.length / 1024, pass1.length / 1024);
+            return pass1;
+        }
+
+        // Pass 2: scale down proportionally, then encode at standard quality
+        log.info("Quality-only pass still {}KB — downscaling...", pass1.length / 1024);
         double scale = Math.sqrt((double) COMPRESS_THRESHOLD / imageData.length) * 0.95;
         int newW = Math.max(1, (int)(original.getWidth()  * scale));
         int newH = Math.max(1, (int)(original.getHeight() * scale));
@@ -154,21 +169,23 @@ public class ClaudeVisionOcrEngine implements OcrEngine {
         g.drawImage(original.getScaledInstance(newW, newH, Image.SCALE_SMOOTH), 0, 0, null);
         g.dispose();
 
+        byte[] pass2 = encodeJpeg(scaled, 0.85f);
+        log.info("Compressed {}KB → {}KB (downscaled to {}x{})", imageData.length / 1024, pass2.length / 1024, newW, newH);
+        return pass2;
+    }
+
+    private byte[] encodeJpeg(BufferedImage image, float quality) throws Exception {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        // Always write as JPEG for maximum size reduction
         ImageWriter writer = ImageIO.getImageWritersByFormatName("jpeg").next();
         ImageWriteParam params = writer.getDefaultWriteParam();
         params.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
-        params.setCompressionQuality(0.85f);
+        params.setCompressionQuality(quality);
         try (ImageOutputStream ios = ImageIO.createImageOutputStream(baos)) {
             writer.setOutput(ios);
-            writer.write(null, new javax.imageio.IIOImage(scaled, null, null), params);
+            writer.write(null, new javax.imageio.IIOImage(image, null, null), params);
         }
         writer.dispose();
-
-        byte[] compressed = baos.toByteArray();
-        log.info("Compressed {}KB → {}KB", imageData.length / 1024, compressed.length / 1024);
-        return compressed;
+        return baos.toByteArray();
     }
 
     // -------------------------------------------------------------------------
@@ -209,8 +226,11 @@ public class ClaudeVisionOcrEngine implements OcrEngine {
 
     private String buildPrompt(String emailContext) {
         String contextHint = (emailContext != null && !emailContext.isBlank())
-                ? "\nEmail context (use this to help identify the store if the receipt is unclear): \""
+                ? "\nEmail context (use this to identify the store and validate dates): \""
                   + emailContext.replace("\"", "'") + "\"\n"
+                  + "IMPORTANT: The 'Received' date in the email context is reliable ground truth for the year. "
+                  + "If any date on the receipt is ambiguous or the year looks incorrect "
+                  + "(e.g. printed as '25 but the email was received in 2026), use the year from the email Received date.\n"
                 : "";
 
         return """
@@ -238,6 +258,10 @@ public class ClaudeVisionOcrEngine implements OcrEngine {
                   3. cashBalanceDate        — a HAND-WRITTEN date on the receipt (often written in pen or pencil
                                              as a balance verification or reconciliation date), in MM-DD-YYYY format.
                                              This is a different date from the deposit date and is usually written by hand.
+                                             If the hand-written date shows only month and day without a year
+                                             (e.g. "2/13" or "02-13"), use the SAME YEAR as the cashDepositDate.
+                                             For example, if cashDepositDate is "02-18-2026" and the balance date
+                                             shows "02-07", output "02-07-2026".
                                              Use "" (empty string) if no hand-written date is present.
 
                   4. depositAccountNumber   — the masked bank account number printed on the receipt.
@@ -296,7 +320,8 @@ public class ClaudeVisionOcrEngine implements OcrEngine {
                 String storeId              = extractStoreId(node);
                 String rawDepositDate       = node.path("cashDepositDate").asText("").trim();
                 String cashDepositDate      = rawDepositDate.isBlank() ? "01-01-1900" : normalizeDate(rawDepositDate);
-                String cashBalanceDate      = normalizeDate(node.path("cashBalanceDate").asText("").trim());
+                String cashBalanceDate      = inferBalanceDateYear(
+                        normalizeDate(node.path("cashBalanceDate").asText("").trim()), cashDepositDate);
                 String depositAccountNumber = extractAccountNumber(node);
                 double totalCashDeposit     = node.path("totalCashDeposit").asDouble(0.0);
                 double amount               = node.path("amount").asDouble(0.0);
@@ -347,6 +372,32 @@ public class ClaudeVisionOcrEngine implements OcrEngine {
             return text.substring(start, end + 1);
         }
         return "[]";
+    }
+
+    /**
+     * If cashBalanceDate has no year (e.g. "02-07" from a hand-written MM-dd entry),
+     * fills in the year from cashDepositDate (format MM-DD-YYYY) and re-formats to MM-DD-YYYY.
+     * Returns the date unchanged if it already contains a 4-digit year or is blank.
+     */
+    private String inferBalanceDateYear(String cashBalanceDate, String cashDepositDate) {
+        if (cashBalanceDate == null || cashBalanceDate.isBlank()) return cashBalanceDate;
+        // Already has a 4-digit year — nothing to do
+        if (cashBalanceDate.matches(".*\\d{4}.*")) return cashBalanceDate;
+
+        // Extract year from deposit date (expected format MM-DD-YYYY)
+        if (cashDepositDate == null || !cashDepositDate.matches("\\d{2}-\\d{2}-\\d{4}")) return cashBalanceDate;
+        int year = Integer.parseInt(cashDepositDate.substring(6));
+
+        // Try to parse the yearless balance date as MM-dd or M/d variants
+        for (String pattern : new String[]{"MM-dd", "MM/dd", "M-d", "M/d"}) {
+            try {
+                MonthDay md = MonthDay.parse(cashBalanceDate.trim(), DateTimeFormatter.ofPattern(pattern));
+                String inferred = md.atYear(year).format(OUT_FMT);
+                log.debug("Inferred year {} for balance date '{}' → '{}'", year, cashBalanceDate, inferred);
+                return inferred;
+            } catch (Exception ignored) {}
+        }
+        return cashBalanceDate;
     }
 
     /**
