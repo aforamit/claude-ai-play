@@ -1,0 +1,61 @@
+spring:
+  application:
+    name: qbo-integration
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: 8080
+  error:
+    include-message: always
+    include-binding-errors: always
+
+# ── QuickBooks Online Configuration ──────────────────────────────────────────
+# Set these via environment variables before starting the application.
+# Never commit real credentials to source control.
+qbo:
+  # OAuth 2.0 credentials from developer.intuit.com
+  client-id: ${QBO_CLIENT_ID:your-client-id-here}
+  client-secret: ${QBO_CLIENT_SECRET:your-client-secret-here}
+
+  # Must match the redirect URI registered in your Intuit app
+  redirect-uri: ${QBO_REDIRECT_URI:http://localhost:8080/api/auth/callback}
+
+  # Your QBO company ID (realmId) — also captured automatically during OAuth
+  realm-id: ${QBO_REALM_ID:}
+
+  # true = sandbox (developer testing), false = production
+  sandbox: ${QBO_SANDBOX:true}
+
+  # OAuth 2.0 scopes
+  scopes:
+    - com.intuit.quickbooks.accounting
+
+# ── Actuator Endpoints ───────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, env
+  endpoint:
+    health:
+      show-details: always
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: QBO Integration
+    description: QuickBooks Online API integration for accounting automation
+    version: 1.0.0
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.accounting.qbo: DEBUG
+    org.springframework.web.client: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
