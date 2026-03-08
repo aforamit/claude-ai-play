@@ -6,6 +6,15 @@ echo  QBO Integration - QuickBooks Online API Platform
 echo ============================================================
 echo.
 
+REM ── Set Java 21 and Maven paths (auto-detected on this machine) ──────────
+if exist "C:\Program Files\Eclipse Adoptium\jdk-21.0.10.7-hotspot\bin\java.exe" (
+    set "JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.10.7-hotspot"
+    set "PATH=%JAVA_HOME%\bin;%PATH%"
+)
+if exist "C:\Workshop\Development\apache-maven-3.9.12\bin\mvn.cmd" (
+    set "PATH=C:\Workshop\Development\apache-maven-3.9.12\bin;%PATH%"
+)
+
 REM ── Check Java 21 ────────────────────────────────────────────────────────
 where java >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (

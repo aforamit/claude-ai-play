@@ -39,6 +39,9 @@ public class InvoiceLine {
         @JsonProperty("ItemRef")
         private EntityRef itemRef;
 
+        @JsonProperty("ClassRef")
+        private EntityRef classRef;
+
         @JsonProperty("UnitPrice")
         private BigDecimal unitPrice;
 
@@ -50,6 +53,8 @@ public class InvoiceLine {
 
         public EntityRef getItemRef() { return itemRef; }
         public void setItemRef(EntityRef itemRef) { this.itemRef = itemRef; }
+        public EntityRef getClassRef() { return classRef; }
+        public void setClassRef(EntityRef classRef) { this.classRef = classRef; }
         public BigDecimal getUnitPrice() { return unitPrice; }
         public void setUnitPrice(BigDecimal unitPrice) { this.unitPrice = unitPrice; }
         public BigDecimal getQuantity() { return quantity; }

@@ -11,6 +11,9 @@ import java.math.BigDecimal;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class DepositLine {
 
+    @JsonProperty("Description")
+    private String description;
+
     @JsonProperty("Amount")
     private BigDecimal amount;
 
@@ -80,6 +83,8 @@ public class DepositLine {
 
     // ── Getters & Setters ────────────────────────────────────────────────────
 
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
     public BigDecimal getAmount() { return amount; }
     public void setAmount(BigDecimal amount) { this.amount = amount; }
     public String getDetailType() { return detailType; }

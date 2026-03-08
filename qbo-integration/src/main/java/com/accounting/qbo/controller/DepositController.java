@@ -35,7 +35,7 @@ public class DepositController {
     @GetMapping
     public ResponseEntity<ApiResponse<List<Deposit>>> getAll(@PathVariable String realmId) {
         List<Deposit> deposits = depositService.findAll(realmId);
-        return ResponseEntity.ok(ApiResponse.ok(deposits));
+        return ResponseEntity.ok(ApiResponse.ofList(deposits));
     }
 
     @GetMapping("/{id}")
@@ -43,7 +43,7 @@ public class DepositController {
             @PathVariable String realmId,
             @PathVariable String id) {
         return depositService.findById(realmId, id)
-                .map(deposit -> ResponseEntity.ok(ApiResponse.ok(deposit)))
+                .map(deposit -> ResponseEntity.ok(ApiResponse.ofOne(deposit)))
                 .orElse(ResponseEntity.notFound().build());
     }
 
@@ -53,7 +53,7 @@ public class DepositController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         List<Deposit> deposits = depositService.findByDateRange(realmId, from, to);
-        return ResponseEntity.ok(ApiResponse.ok(deposits));
+        return ResponseEntity.ok(ApiResponse.ofList(deposits));
     }
 
     @GetMapping("/by-account/{accountId}")
@@ -61,7 +61,7 @@ public class DepositController {
             @PathVariable String realmId,
             @PathVariable String accountId) {
         List<Deposit> deposits = depositService.findByAccountId(realmId, accountId);
-        return ResponseEntity.ok(ApiResponse.ok(deposits));
+        return ResponseEntity.ok(ApiResponse.ofList(deposits));
     }
 
     @GetMapping("/query")
@@ -69,6 +69,6 @@ public class DepositController {
             @PathVariable String realmId,
             @RequestParam String where) {
         List<Deposit> deposits = depositService.query(realmId, where);
-        return ResponseEntity.ok(ApiResponse.ok(deposits));
+        return ResponseEntity.ok(ApiResponse.ofList(deposits));
     }
 }

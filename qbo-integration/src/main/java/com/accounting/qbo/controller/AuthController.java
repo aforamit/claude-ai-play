@@ -73,7 +73,7 @@ public class AuthController {
                 "environment", props.isSandbox() ? "sandbox" : "production"
         );
 
-        return ResponseEntity.ok(ApiResponse.ok(info));
+        return ResponseEntity.ok(ApiResponse.ofOne(info));
     }
 
     /**
@@ -92,9 +92,9 @@ public class AuthController {
                             "refreshTokenExpired", token.isRefreshTokenExpired(),
                             "environment", props.isSandbox() ? "sandbox" : "production"
                     );
-                    return ResponseEntity.ok(ApiResponse.ok(status));
+                    return ResponseEntity.ok(ApiResponse.ofOne(status));
                 })
-                .orElse(ResponseEntity.ok(ApiResponse.ok(
+                .orElse(ResponseEntity.ok(ApiResponse.ofOne(
                         Map.of("authorized", false, "realmId", realmId))));
     }
 

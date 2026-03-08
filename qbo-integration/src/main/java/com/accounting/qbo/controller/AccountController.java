@@ -36,7 +36,7 @@ public class AccountController {
     @GetMapping
     public ResponseEntity<ApiResponse<List<Account>>> getAll(@PathVariable String realmId) {
         List<Account> accounts = accountService.findAll(realmId);
-        return ResponseEntity.ok(ApiResponse.ok(accounts));
+        return ResponseEntity.ok(ApiResponse.ofList(accounts));
     }
 
     @GetMapping("/{id}")
@@ -44,26 +44,26 @@ public class AccountController {
             @PathVariable String realmId,
             @PathVariable String id) {
         return accountService.findById(realmId, id)
-                .map(account -> ResponseEntity.ok(ApiResponse.ok(account)))
+                .map(account -> ResponseEntity.ok(ApiResponse.ofOne(account)))
                 .orElse(ResponseEntity.notFound().build());
     }
 
     @GetMapping("/active")
     public ResponseEntity<ApiResponse<List<Account>>> getActive(@PathVariable String realmId) {
         List<Account> accounts = accountService.findActive(realmId);
-        return ResponseEntity.ok(ApiResponse.ok(accounts));
+        return ResponseEntity.ok(ApiResponse.ofList(accounts));
     }
 
     @GetMapping("/balance-sheet")
     public ResponseEntity<ApiResponse<List<Account>>> getBalanceSheet(@PathVariable String realmId) {
         List<Account> accounts = accountService.findBalanceSheetAccounts(realmId);
-        return ResponseEntity.ok(ApiResponse.ok(accounts));
+        return ResponseEntity.ok(ApiResponse.ofList(accounts));
     }
 
     @GetMapping("/income-statement")
     public ResponseEntity<ApiResponse<List<Account>>> getIncomeStatement(@PathVariable String realmId) {
         List<Account> accounts = accountService.findIncomeStatementAccounts(realmId);
-        return ResponseEntity.ok(ApiResponse.ok(accounts));
+        return ResponseEntity.ok(ApiResponse.ofList(accounts));
     }
 
     @GetMapping("/by-type")
@@ -71,7 +71,7 @@ public class AccountController {
             @PathVariable String realmId,
             @RequestParam String type) {
         List<Account> accounts = accountService.findByType(realmId, type);
-        return ResponseEntity.ok(ApiResponse.ok(accounts));
+        return ResponseEntity.ok(ApiResponse.ofList(accounts));
     }
 
     @GetMapping("/by-classification")
@@ -79,7 +79,7 @@ public class AccountController {
             @PathVariable String realmId,
             @RequestParam String classification) {
         List<Account> accounts = accountService.findByClassification(realmId, classification);
-        return ResponseEntity.ok(ApiResponse.ok(accounts));
+        return ResponseEntity.ok(ApiResponse.ofList(accounts));
     }
 
     @GetMapping("/query")
@@ -87,6 +87,6 @@ public class AccountController {
             @PathVariable String realmId,
             @RequestParam String where) {
         List<Account> accounts = accountService.query(realmId, where);
-        return ResponseEntity.ok(ApiResponse.ok(accounts));
+        return ResponseEntity.ok(ApiResponse.ofList(accounts));
     }
 }
