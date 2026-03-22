@@ -22,9 +22,8 @@ import java.util.List;
 @RequestMapping("/api/csv/deposits")
 public class CsvDepositController {
 
-    private static final String DEFAULT_CSV      = "data/receipts/deposits.csv";
-    private static final String DEFAULT_INVOICES = "data/prod/prod_invoices_260307-260314.json";
-    private static final String DEFAULT_OUTPUT   = "data/test";
+    private static final String DEFAULT_CSV    = "data/receipts/deposits.csv";
+    private static final String DEFAULT_OUTPUT = "data/test";
 
     private final CsvDepositService csvDepositService;
 
@@ -34,20 +33,18 @@ public class CsvDepositController {
 
     /**
      * Reads the deposits CSV and generates one QBO deposit JSON file per row in data/test/.
-     * Line items are populated from the invoices JSON by matching DocNumber = YYMMDD-StoreId.
+     * Invoice line data is loaded automatically from all prod_invoices_*.json files in data/prod/.
      *
-     * @param csvPath      path to the source CSV (default: data/receipts/deposits.csv)
-     * @param invoicesJson path to the invoices JSON (default: data/prod/prod_invoices_260301-260307.json)
-     * @param outputDir    output directory for generated JSON files (default: data/test)
+     * @param csvPath   path to the source CSV (default: data/receipts/deposits.csv)
+     * @param outputDir output directory for generated JSON files (default: data/test)
      * @return list of generated file names
      */
     @GetMapping("/generate")
     public ResponseEntity<ApiResponse<List<String>>> generate(
-            @RequestParam(defaultValue = DEFAULT_CSV)      String csvPath,
-            @RequestParam(defaultValue = DEFAULT_INVOICES) String invoicesJson,
-            @RequestParam(defaultValue = DEFAULT_OUTPUT)   String outputDir) {
+            @RequestParam(defaultValue = DEFAULT_CSV)    String csvPath,
+            @RequestParam(defaultValue = DEFAULT_OUTPUT) String outputDir) {
 
-        List<String> files = csvDepositService.generateDepositJsonFiles(csvPath, invoicesJson, outputDir);
+        List<String> files = csvDepositService.generateDepositJsonFiles(csvPath, outputDir);
         return ResponseEntity.ok(ApiResponse.ofList(files));
     }
 }

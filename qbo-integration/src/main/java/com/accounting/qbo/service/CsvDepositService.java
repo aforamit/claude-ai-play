@@ -12,11 +12,12 @@ public interface CsvDepositService {
     /**
      * Reads the deposits CSV at the given path and generates one deposit JSON file
      * per row in {@code outputDir}.
+     * Invoice line data is loaded automatically from all {@code prod_invoices_*.json}
+     * files found in {@code data/prod/}.
      *
-     * @param csvPath      absolute or relative path to the deposits CSV
-     * @param invoicesJson path to the invoices JSON used to populate Line items
-     * @param outputDir    directory where generated JSON files will be written
+     * @param csvPath   absolute or relative path to the deposits CSV
+     * @param outputDir directory where generated JSON files will be written
      * @return list of generated file names (not full paths)
      */
-    List<String> generateDepositJsonFiles(String csvPath, String invoicesJson, String outputDir);
+    List<String> generateDepositJsonFiles(String csvPath, String outputDir);
 }

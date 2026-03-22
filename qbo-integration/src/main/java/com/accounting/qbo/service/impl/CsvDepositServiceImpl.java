@@ -14,12 +14,15 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.math.BigDecimal;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -42,8 +45,10 @@ public class CsvDepositServiceImpl implements CsvDepositService {
     private static final DateTimeFormatter CSV_DATE_FMT  = DateTimeFormatter.ofPattern("MM-dd-yyyy");
     private static final DateTimeFormatter JSON_DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
-    private static final String BANK_ACCOUNTS_JSON = "data/prod/static_aasma_bank_accounts.json";
-    private static final String CLASSREFS_JSON     = "data/prod/static_aasma_classrefs.json";
+    private static final String BANK_ACCOUNTS_JSON  = "data/prod/static_aasma_bank_accounts.json";
+    private static final String CLASSREFS_JSON      = "data/prod/static_aasma_classrefs.json";
+    private static final String INVOICES_DIR        = "data/prod";
+    private static final String INVOICES_GLOB       = "prod_invoices_*.json";
 
     /** DocNumber date portion format: last-2-year + month + day → e.g. 260301 */
     private static final DateTimeFormatter DOC_DATE_FMT = DateTimeFormatter.ofPattern("yyMMdd");
@@ -56,24 +61,33 @@ public class CsvDepositServiceImpl implements CsvDepositService {
     /** Lazily loaded cache: storeId → [classId, className] */
     private Map<String, String[]> classRefIndex;
 
-    /** Cached invoice line data per invoices JSON path: docNumber → InvoiceLineRef */
-    private String loadedInvoicesPath;
+    /** Lazily loaded combined index from all prod_invoices_*.json: docNumber → InvoiceLineRef */
     private Map<String, InvoiceLineRef> invoiceIndex;
 
     public CsvDepositServiceImpl(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
     }
 
+    /** One parsed row from the deposits CSV. */
+    private record CsvRow(String storeId, String accountNum, String depositDate,
+                          String balanceDate, String amount, String totalAmt) {}
+
+    /** Group key: rows sharing these three fields belong to the same deposit. */
+    private record GroupKey(String accountNum, String depositDate, String totalAmt) {}
+
     /** Holds the data needed to build a deposit Line item from a matched invoice. */
     private record InvoiceLineRef(String invoiceId, String lineId, BigDecimal amount) {}
 
     @Override
-    public List<String> generateDepositJsonFiles(String csvPath, String invoicesJson, String outputDir) {
+    public List<String> generateDepositJsonFiles(String csvPath, String outputDir) {
         List<String> generated = new ArrayList<>();
         ArrayNode allDeposits = objectMapper.createArrayNode();
 
         try {
             Files.createDirectories(Paths.get(outputDir));
+
+            // ── Pass 1: parse all rows and group by (accountNum, depositDate, totalAmt) ──
+            Map<GroupKey, List<CsvRow>> groups = new LinkedHashMap<>();
 
             try (BufferedReader reader = new BufferedReader(new FileReader(csvPath))) {
                 String headerLine = reader.readLine();
@@ -82,49 +96,44 @@ public class CsvDepositServiceImpl implements CsvDepositService {
                     return generated;
                 }
 
-                String[] headers = parseCsvLine(headerLine);
-                int idxStoreId      = indexOf(headers, "Store ID");
-                int idxAccountNum   = indexOf(headers, "Deposit Account #");
-                int idxDepositDate  = indexOf(headers, "Cash Deposit Date (MM-DD-YYYY)");
-                int idxBalanceDate  = indexOf(headers, "Cash Balance Date (MM-DD-YYYY)");
-                int idxAmount       = indexOf(headers, "Amount ($)");
-                int idxTotalAmt     = indexOf(headers, "Total Cash Deposit ($)");
+                String[] headers   = parseCsvLine(headerLine);
+                int idxStoreId     = indexOf(headers, "Store ID");
+                int idxAccountNum  = indexOf(headers, "Deposit Account #");
+                int idxDepositDate = indexOf(headers, "Cash Deposit Date (MM-DD-YYYY)");
+                int idxBalanceDate = indexOf(headers, "Cash Balance Date (MM-DD-YYYY)");
+                int idxAmount      = indexOf(headers, "Amount ($)");
+                int idxTotalAmt    = indexOf(headers, "Total Cash Deposit ($)");
 
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (line.isBlank()) continue;
                     String[] cols = parseCsvLine(line);
-
-                    String storeId      = cols[idxStoreId].trim();
-                    String accountNum   = cols[idxAccountNum].trim();
-                    String depositDate  = cols[idxDepositDate].trim();
-                    String balanceDate  = cols[idxBalanceDate].trim();
-                    String amount       = cols[idxAmount].trim();
-                    String totalAmt     = cols[idxTotalAmt].trim();
-
-                    LocalDate txnDate   = LocalDate.parse(depositDate, CSV_DATE_FMT);
-                    String txnDateStr   = txnDate.format(JSON_DATE_FMT);
-
-                    String[] account    = lookupBankAccount(storeId);
-                    String accountId    = account[0];
-                    String accountName  = account[1];
-
-                    String[] classRef   = lookupClassRef(storeId);
-
-                    // DocNumber = YYMMDD (from Cash Balance Date) + "-" + storeId
-                    LocalDate balDate   = LocalDate.parse(balanceDate, CSV_DATE_FMT);
-                    String docNumber    = balDate.format(DOC_DATE_FMT) + "-" + storeId;
-                    InvoiceLineRef inv  = lookupInvoiceLine(invoicesJson, docNumber);
-
-                    ObjectNode deposit = buildDepositJson(accountId, accountName, txnDateStr,
-                            new BigDecimal(amount), new BigDecimal(totalAmt), inv, classRef);
-
-                    allDeposits.add(deposit);
-                    log.info("Built deposit for storeId={} txnDate={}", storeId, txnDateStr);
+                    CsvRow row = new CsvRow(
+                            cols[idxStoreId].trim(), cols[idxAccountNum].trim(),
+                            cols[idxDepositDate].trim(), cols[idxBalanceDate].trim(),
+                            cols[idxAmount].trim(), cols[idxTotalAmt].trim());
+                    GroupKey key = new GroupKey(row.accountNum(), row.depositDate(), row.totalAmt());
+                    groups.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
                 }
             }
 
-            // Write all deposits to a single output file
+            // ── Pass 2: build one deposit per group ───────────────────────────────────
+            for (Map.Entry<GroupKey, List<CsvRow>> entry : groups.entrySet()) {
+                List<CsvRow> rows  = entry.getValue();
+                CsvRow first       = rows.get(0);
+                String[] account   = lookupBankAccount(first.storeId());
+                String[] classRef  = lookupClassRef(first.storeId());
+                String txnDateStr  = LocalDate.parse(first.depositDate(), CSV_DATE_FMT)
+                                              .format(JSON_DATE_FMT);
+                BigDecimal totalAmt = new BigDecimal(first.totalAmt());
+
+                ObjectNode deposit = buildGroupedDeposit(
+                        account, classRef, txnDateStr, totalAmt, rows);
+                allDeposits.add(deposit);
+                log.info("Built deposit: account={} date={} rows={}", first.accountNum(), txnDateStr, rows.size());
+            }
+
+            // ── Write all deposits to a single output file ────────────────────────────
             String outputFile = outputDir + "/deposits.json";
             try (FileWriter writer = new FileWriter(outputFile)) {
                 objectMapper.writerWithDefaultPrettyPrinter().writeValue(writer, allDeposits);
@@ -142,43 +151,58 @@ public class CsvDepositServiceImpl implements CsvDepositService {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private ObjectNode buildDepositJson(String accountId, String accountName,
-                                        String txnDate, BigDecimal amount, BigDecimal totalAmt,
-                                        InvoiceLineRef inv, String[] classRef) {
+    /**
+     * Builds one QBO deposit for a group of CSV rows sharing the same
+     * Deposit Account #, Cash Deposit Date and Total Cash Deposit.
+     * Each row becomes an ACCOUNTABLE CASH Line item with its own LinkedTxn.
+     * A single Over/Short line is appended when TotalAmt ≠ sum of cash amounts.
+     */
+    private ObjectNode buildGroupedDeposit(String[] account, String[] classRef,
+                                           String txnDate, BigDecimal totalAmt,
+                                           List<CsvRow> rows) {
         ObjectNode root = objectMapper.createObjectNode();
 
-        // DepositToAccountRef — value from static bank accounts lookup
         ObjectNode accountRef = objectMapper.createObjectNode();
-        accountRef.put("value", accountId);
-        accountRef.put("name", accountName);
+        accountRef.put("value", account[0]);
+        accountRef.put("name",  account[1]);
         root.set("DepositToAccountRef", accountRef);
 
-        root.put("TotalAmt", totalAmt);
-        root.put("TxnDate", txnDate);
+        root.put("TotalAmt",    totalAmt);
+        root.put("TxnDate",     txnDate);
+        root.put("PrivateNote", "CashDepositAutomation.AI");
 
-        // Line array — ACCOUNTABLE CASH line linked to the matched invoice
-        ArrayNode lines = objectMapper.createArrayNode();
+        ArrayNode lines          = objectMapper.createArrayNode();
+        BigDecimal sumCashAmounts = BigDecimal.ZERO;
 
-        BigDecimal cashAmount = inv != null ? inv.amount().abs() : amount;
+        for (CsvRow row : rows) {
+            // Invoice lookup: DocNumber = YYMMDD (Cash Balance Date) + "-" + storeId
+            LocalDate balDate     = LocalDate.parse(row.balanceDate(), CSV_DATE_FMT);
+            String docNumber      = balDate.format(DOC_DATE_FMT) + "-" + row.storeId();
+            InvoiceLineRef inv    = lookupInvoiceLine(docNumber);
 
-        ObjectNode cashLine = objectMapper.createObjectNode();
-        cashLine.put("Description", "ACCOUNTABLE CASH");
-        cashLine.put("Amount", cashAmount);
+            BigDecimal cashAmount = inv != null ? inv.amount().abs() : new BigDecimal(row.amount());
 
-        ArrayNode linkedTxn = objectMapper.createArrayNode();
-        if (inv != null) {
-            ObjectNode txnRef = objectMapper.createObjectNode();
-            txnRef.put("TxnId",     inv.invoiceId());
-            txnRef.put("TxnType",   "Invoice");
-            txnRef.put("TxnLineId", inv.lineId());
-            linkedTxn.add(txnRef);
+            ObjectNode cashLine   = objectMapper.createObjectNode();
+            cashLine.put("Description", "ACCOUNTABLE CASH");
+            cashLine.put("Amount", cashAmount);
+
+            ArrayNode linkedTxn = objectMapper.createArrayNode();
+            if (inv != null) {
+                ObjectNode txnRef = objectMapper.createObjectNode();
+                txnRef.put("TxnId",     inv.invoiceId());
+                txnRef.put("TxnType",   "Invoice");
+                txnRef.put("TxnLineId", inv.lineId());
+                linkedTxn.add(txnRef);
+            }
+            cashLine.set("LinkedTxn", linkedTxn);
+            lines.add(cashLine);
+
+            sumCashAmounts = sumCashAmounts.add(cashAmount);
         }
-        cashLine.set("LinkedTxn", linkedTxn);
-        lines.add(cashLine);
 
-        // Over/Short line — added when TotalAmt ≠ sum of ACCOUNTABLE CASH line amount
-        BigDecimal diff = totalAmt.subtract(cashAmount).stripTrailingZeros();
-        if (diff.compareTo(BigDecimal.ZERO) != 0 && inv != null) {
+        // Single Over/Short line for the whole deposit when amounts don't balance
+        BigDecimal diff = totalAmt.subtract(sumCashAmounts).stripTrailingZeros();
+        if (diff.compareTo(BigDecimal.ZERO) != 0) {
             ObjectNode overShort = objectMapper.createObjectNode();
             overShort.put("Id",         "1");
             overShort.put("LineNum",     1);
@@ -203,7 +227,6 @@ public class CsvDepositServiceImpl implements CsvDepositService {
         }
 
         root.set("Line", lines);
-
         return root;
     }
 
@@ -302,33 +325,46 @@ public class CsvDepositServiceImpl implements CsvDepositService {
     }
 
     /**
-     * Looks up the ACCOUNTABLE CASH line from the invoices JSON for the given DocNumber.
+     * Looks up the ACCOUNTABLE CASH line for the given DocNumber.
+     * Loads all {@code prod_invoices_*.json} files from {@code data/prod/} on first call.
      *
-     * @param invoicesJson path to the invoices JSON file
-     * @param docNumber    e.g. "260301-1174"
+     * @param docNumber e.g. "260301-1174"
      * @return InvoiceLineRef or null if not found
      */
-    private InvoiceLineRef lookupInvoiceLine(String invoicesJson, String docNumber) {
-        if (!invoicesJson.equals(loadedInvoicesPath) || invoiceIndex == null) {
-            invoiceIndex      = loadInvoiceIndex(invoicesJson);
-            loadedInvoicesPath = invoicesJson;
+    private InvoiceLineRef lookupInvoiceLine(String docNumber) {
+        if (invoiceIndex == null) {
+            invoiceIndex = loadAllInvoiceFiles(INVOICES_DIR, INVOICES_GLOB);
         }
         InvoiceLineRef ref = invoiceIndex.get(docNumber);
         if (ref == null) {
-            log.warn("No invoice found for docNumber={} in {}", docNumber, invoicesJson);
+            log.warn("No invoice found for docNumber={}", docNumber);
         }
         return ref;
     }
 
     /**
-     * Parses the invoices JSON and builds a docNumber → InvoiceLineRef index.
-     * Only indexes invoices that have a Line with Description = "ACCOUNTABLE CASH".
+     * Scans {@code dir} for all files matching {@code glob}, parses each as a QBO invoices JSON,
+     * and builds a combined docNumber → InvoiceLineRef index.
      */
-    private Map<String, InvoiceLineRef> loadInvoiceIndex(String jsonPath) {
+    private Map<String, InvoiceLineRef> loadAllInvoiceFiles(String dir, String glob) {
         Map<String, InvoiceLineRef> index = new HashMap<>();
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(Paths.get(dir), glob)) {
+            for (Path file : stream) {
+                indexInvoiceFile(file.toFile(), index);
+            }
+        } catch (Exception e) {
+            log.error("Failed to scan invoice files from {}/{}: {}", dir, glob, e.getMessage());
+        }
+        log.info("Loaded {} invoice ACCOUNTABLE CASH lines from {}/{}", index.size(), dir, glob);
+        return index;
+    }
+
+    /** Parses one invoices JSON file and merges its entries into {@code index}. */
+    private void indexInvoiceFile(File file, Map<String, InvoiceLineRef> index) {
         try {
-            JsonNode root     = objectMapper.readTree(new File(jsonPath));
+            JsonNode root     = objectMapper.readTree(file);
             JsonNode invoices = root.path("QueryResponse").path("Invoice");
+            int before        = index.size();
             for (JsonNode invoice : invoices) {
                 String invoiceId = invoice.path("Id").asText("");
                 String docNumber = invoice.path("DocNumber").asText("");
@@ -343,11 +379,10 @@ public class CsvDepositServiceImpl implements CsvDepositService {
                     }
                 }
             }
-            log.info("Loaded {} invoice ACCOUNTABLE CASH lines from {}", index.size(), jsonPath);
+            log.info("Indexed {} entries from {}", index.size() - before, file.getName());
         } catch (Exception e) {
-            log.error("Failed to load invoices from {}: {}", jsonPath, e.getMessage());
+            log.error("Failed to load invoices from {}: {}", file.getName(), e.getMessage());
         }
-        return index;
     }
 
     /** Extract the trailing digits from an account number like "*****1729" → "1729". */
