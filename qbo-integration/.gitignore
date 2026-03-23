@@ -8,3 +8,5 @@ tokens/StoredCredential
 application.properties
 application.yml
 target/
+data/
+log/

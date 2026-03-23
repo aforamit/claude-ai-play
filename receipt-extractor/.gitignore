@@ -10,3 +10,5 @@ deposits.csv
 tokens/StoredCredential
 application.properties
 target/
+data/
+log/
