@@ -14,31 +14,46 @@ A modular, extensible Java 21 / Spring Boot 3 service for integrating with the Q
 ┌─────────────────────────▼───────────────────────────────────────────┐
 │                    Spring Boot REST API (Port 8080)                  │
 │                                                                      │
-│  ┌─────────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
-│  │ AuthController  │  │InvoiceController │  │AccountController │   │
-│  │ /api/auth/*     │  │/api/{id}/invoices│  │/api/{id}/accounts│   │
-│  └────────┬────────┘  └────────┬─────────┘  └────────┬─────────┘   │
-│           │                   │                      │              │
-│  ┌────────▼────────┐  ┌────────▼──────────────────────▼─────────┐  │
-│  │ QboOAuthService │  │      Service Layer (Business Logic)       │  │
-│  │  - Auth URL     │  │  InvoiceService / DepositService /        │  │
-│  │  - Token swap   │  │  AccountService (interfaces + impls)      │  │
-│  │  - Auto-refresh │  └─────────────────┬─────────────────────────┘  │
-│  └────────┬────────┘                   │                            │
-│           │                   ┌────────▼─────────┐                 │
-│  ┌────────▼────────┐          │  QboApiClient     │                 │
-│  │   TokenStore    │◄─────────│  - Bearer token   │                 │
-│  │(InMemory/DB/etc)│          │  - Query builder  │                 │
-│  └─────────────────┘          │  - Error handling │                 │
-│                               └────────┬──────────┘                 │
-└────────────────────────────────────────┼────────────────────────────┘
-                                         │ HTTPS
-                          ┌──────────────▼──────────────┐
-                          │   QuickBooks Online API v3   │
-                          │  sandbox / production        │
-                          │  Invoices / Deposits /       │
-                          │  Accounts / Chart of Accts   │
-                          └─────────────────────────────┘
+│  ┌──────────────┐  ┌──────────────────┐  ┌───────────────────────┐  │
+│  │AuthController│  │InvoiceController │  │   AccountController   │  │
+│  │/api/auth/*   │  │/api/{id}/invoices│  │  /api/{id}/accounts   │  │
+│  └──────┬───────┘  └────────┬─────────┘  └───────────┬───────────┘  │
+│         │                  │                         │              │
+│  ┌──────▼───────┐  ┌────────▼─────────────────────────▼──────────┐  │
+│  │QboOAuthService│  │      Service Layer (Business Logic)          │  │
+│  │ - Auth URL   │  │  InvoiceService / DepositService /            │  │
+│  │ - Token swap │  │  AccountService / CsvDepositService /         │  │
+│  │ - Refresh    │  │  ReconciliationService (interfaces + impls)   │  │
+│  └──────┬───────┘  └──────────┬───────────────────────────────────┘  │
+│         │                    │                                       │
+│  ┌──────▼───────┐   ┌─────────▼──────────┐                          │
+│  │  TokenStore  │   │   QboApiClient      │  ← live QBO calls only  │
+│  │(InMemory/DB) │   │   - Bearer token    │                          │
+│  └──────────────┘   │   - Query builder   │                          │
+│                     │   - Error handling  │                          │
+│                     └─────────┬───────────┘                          │
+└───────────────────────────────┼─────────────────────────────────────┘
+                                │ HTTPS
+                 ┌──────────────▼──────────────┐
+                 │   QuickBooks Online API v3   │
+                 │  sandbox / production        │
+                 │  Invoices / Deposits /       │
+                 │  Accounts / Chart of Accts   │
+                 └─────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────┐
+  │                Offline / Local-File Features                      │
+  │                                                                   │
+  │  CsvDepositController  ──►  CsvDepositService                    │
+  │  /api/csv/deposits/generate  reads deposits.csv                  │
+  │                              + prod_invoices_*.json              │
+  │                              writes one JSON per row → data/test/ │
+  │                                                                   │
+  │  ReconciliationController  ──►  ReconciliationService            │
+  │  /api/reconcile              matches Invoices ↔ Deposits          │
+  │                              via ACCOUNTABLE CASH lines           │
+  │                              returns JSON + writes CSV audit log  │
+  └──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -50,21 +65,22 @@ A modular, extensible Java 21 / Spring Boot 3 service for integrating with the Q
 | Layer | Package | Responsibility |
 |-------|---------|---------------|
 | **Controller** | `controller/` | REST endpoints, request/response mapping |
-| **Service** | `service/` | Business logic, QBO SQL query building |
-| **Client** | `client/` | HTTP gateway to QBO API (single responsibility) |
+| **Service** | `service/` | Business logic, QBO query building, local-file processing |
+| **Client** | `client/` | HTTP gateway to live QBO API (single responsibility) |
 | **Auth** | `auth/` | OAuth 2.0 token lifecycle management |
 | **Model** | `model/` | Domain objects mapped to QBO JSON |
+| **DTO** | `dto/` | API response wrappers, reconciliation result type |
 | **Config** | `config/` | Spring beans, configuration properties |
-| **DTO** | `dto/` | API response wrappers |
-| **Exception** | `exception/` | Error handling |
+| **Exception** | `exception/` | Centralized error handling |
 
 ### Key Design Principles
 
 - **Interface-first services** — Each entity has an interface. Swap implementations without touching controllers.
-- **Single HTTP gateway** — `QboApiClient` is the only class that calls QBO. All services depend on it.
+- **Single HTTP gateway** — `QboApiClient` is the only class that calls QBO. All live-API services depend on it.
 - **Auto-refresh tokens** — `QboOAuthService.getValidToken()` transparently refreshes expired access tokens.
-- **Multi-company** — All API endpoints accept `{realmId}` (QBO company ID) as a path parameter.
+- **Multi-company** — All live-API endpoints accept `{realmId}` (QBO company ID) as a path parameter.
 - **Configuration by environment variables** — No credentials in code or config files.
+- **Offline pipeline** — CSV deposit generation and reconciliation work entirely from local JSON files; no live QBO connection required.
 
 ---
 
@@ -76,6 +92,15 @@ qbo-integration/
 ├── run.cmd                              ← Windows launch script
 ├── CLAUDE.md                            ← AI assistant context + extension guide
 ├── README.md                            ← This file
+├── data/
+│   ├── receipts/
+│   │   └── deposits.csv                 ← Source CSV for CsvDepositService
+│   ├── prod/
+│   │   ├── prod_invoices_*.json         ← Invoice exports from QBO
+│   │   ├── prod_deposits_*.json         ← Deposit exports from QBO
+│   │   ├── bank_accounts.json           ← QBO bank accounts (Id + masked name)
+│   │   └── classrefs.json               ← QBO class refs (store number + name)
+│   └── test/                            ← Output for generated deposit JSONs
 └── src/
     ├── main/
     │   ├── java/com/accounting/qbo/
@@ -91,12 +116,16 @@ qbo-integration/
     │   │   │   ├── QboProperties.java       ← qbo.* configuration
     │   │   │   └── AppConfig.java           ← RestClient, ObjectMapper beans
     │   │   ├── controller/
-    │   │   │   ├── AuthController.java      ← OAuth endpoints
-    │   │   │   ├── InvoiceController.java
-    │   │   │   ├── DepositController.java
-    │   │   │   └── AccountController.java
+    │   │   │   ├── HomeController.java      ← GET / — service info
+    │   │   │   ├── AuthController.java      ← /api/auth/*
+    │   │   │   ├── InvoiceController.java   ← /api/{realmId}/invoices/*
+    │   │   │   ├── DepositController.java   ← /api/{realmId}/deposits/*
+    │   │   │   ├── AccountController.java   ← /api/{realmId}/accounts/*
+    │   │   │   ├── CsvDepositController.java    ← /api/csv/deposits/generate
+    │   │   │   └── ReconciliationController.java ← /api/reconcile
     │   │   ├── dto/
-    │   │   │   └── ApiResponse.java         ← Generic response wrapper
+    │   │   │   ├── ApiResponse.java         ← Generic response wrapper
+    │   │   │   └── MatchedTransaction.java  ← Invoice–Deposit match result
     │   │   ├── exception/
     │   │   │   ├── QboException.java
     │   │   │   └── GlobalExceptionHandler.java
@@ -110,15 +139,47 @@ qbo-integration/
     │   │       ├── InvoiceService.java
     │   │       ├── DepositService.java
     │   │       ├── AccountService.java
+    │   │       ├── CsvDepositService.java   ← CSV→JSON pipeline interface
+    │   │       ├── ReconciliationService.java ← Reconciliation interface
     │   │       └── impl/
     │   │           ├── InvoiceServiceImpl.java
     │   │           ├── DepositServiceImpl.java
-    │   │           └── AccountServiceImpl.java
+    │   │           ├── AccountServiceImpl.java
+    │   │           ├── CsvDepositServiceImpl.java
+    │   │           └── ReconciliationServiceImpl.java
     │   └── resources/
     │       └── application.yml
     └── test/
-        └── java/com/accounting/qbo/
-            └── QboApplicationTests.java
+        ├── java/com/accounting/qbo/     ← 164 tests, all passing
+        │   ├── QboApplicationTests.java
+        │   ├── auth/
+        │   │   ├── OAuthTokenTest.java
+        │   │   └── QboOAuthServiceTest.java
+        │   ├── client/
+        │   │   └── QboApiClientTest.java
+        │   ├── config/
+        │   │   └── QboPropertiesTest.java
+        │   ├── controller/
+        │   │   ├── CsvDepositControllerIT.java      ← @SpringBootTest
+        │   │   └── ReconciliationControllerIT.java  ← @SpringBootTest
+        │   ├── dto/
+        │   │   └── ApiResponseTest.java
+        │   ├── exception/
+        │   │   └── GlobalExceptionHandlerTest.java
+        │   ├── model/
+        │   │   └── InvoiceTest.java
+        │   └── service/impl/
+        │       ├── InvoiceServiceImplTest.java
+        │       ├── DepositServiceImplTest.java
+        │       ├── AccountServiceImplTest.java
+        │       ├── CsvDepositServiceImplTest.java
+        │       └── ReconciliationServiceImplTest.java
+        └── resources/fixtures/          ← Test data (PineCrest Retail stores)
+            ├── bank-accounts.json
+            ├── classrefs.json
+            ├── invoices-recon.json
+            ├── deposits-recon.json
+            └── invoices-csv-deposit.json
 ```
 
 ---
@@ -140,8 +201,8 @@ qbo-integration/
 ### Install Maven on Windows 10
 
 1. Download **apache-maven-3.9.x-bin.zip** from https://maven.apache.org/download.cgi
-2. Extract to `C:\Program Files\Apache\maven`
-3. Add `C:\Program Files\Apache\maven\bin` to system `PATH`
+2. Extract to e.g. `C:\Workshop\Development\apache-maven-3.9.12`
+3. Add `...\bin` to system `PATH`
 4. Verify: `mvn -version`
 
 ---
@@ -221,7 +282,31 @@ java -jar target/qbo-integration-1.0.0-SNAPSHOT.jar
 
 ---
 
-## Authorization Flow
+## Running Tests
+
+```cmd
+set JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.10.7-hotspot
+mvn test
+```
+
+All 164 tests should pass:
+
+| Category | Test Classes | Tests |
+|----------|-------------|-------|
+| Auth | `OAuthTokenTest`, `QboOAuthServiceTest` | 28 |
+| Client | `QboApiClientTest` | 14 |
+| Config | `QboPropertiesTest` | 11 |
+| DTO | `ApiResponseTest` | 6 |
+| Exception | `GlobalExceptionHandlerTest` | 12 |
+| Model | `InvoiceTest` | 9 |
+| Services | `InvoiceServiceImplTest`, `DepositServiceImplTest`, `AccountServiceImplTest`, `CsvDepositServiceImplTest`, `ReconciliationServiceImplTest` | 68 |
+| Integration | `CsvDepositControllerIT`, `ReconciliationControllerIT` | 15 |
+| Smoke | `QboApplicationTests` | 1 |
+| **Total** | | **164** |
+
+---
+
+## Authorization Flow (Live QBO)
 
 Once the app is running, authorize it with QuickBooks:
 
@@ -236,6 +321,11 @@ Once the app is running, authorize it with QuickBooks:
 ---
 
 ## API Endpoints
+
+### Home
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/` | Service info, links to key endpoints |
 
 ### Authorization
 | Method | Endpoint | Description |
@@ -278,6 +368,57 @@ Once the app is running, authorize it with QuickBooks:
 | GET | `/by-classification?classification=Asset` | By classification |
 | GET | `/query?where=AccountType = 'Bank'` | Custom QBO WHERE clause |
 
+### CSV Deposit Generation — `/api/csv/deposits`
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/generate` | Read deposits.csv → write one QBO deposit JSON per row |
+
+**Query parameters (both optional):**
+- `csvPath` — path to source CSV (default: `data/receipts/deposits.csv`)
+- `outputDir` — output directory for generated JSON files (default: `data/test`)
+
+**Example:**
+```bash
+curl "http://localhost:8080/api/csv/deposits/generate"
+curl "http://localhost:8080/api/csv/deposits/generate?csvPath=data/receipts/march.csv&outputDir=data/test"
+```
+
+The service reads invoice data from all `prod_invoices_*.json` files in `data/prod/` automatically. Each output file represents a fully constructed QBO Deposit object ready to be posted.
+
+### Reconciliation — `/api/reconcile`
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/reconcile` | Match invoices ↔ deposits, return matches + write CSV |
+
+**Query parameters (all required):**
+- `invoiceFile` — path to invoices JSON (e.g., `data/prod/prod_invoices_260201-260208.json`)
+- `depositFile` — path to deposits JSON (e.g., `data/prod/prod_deposits_260201-260208.json`)
+- `csvOutput` — path where the reconciliation CSV will be written
+
+**Example:**
+```bash
+curl "http://localhost:8080/api/reconcile?invoiceFile=data/prod/prod_invoices_260201-260208.json&depositFile=data/prod/prod_deposits_260201-260208.json&csvOutput=data/reconciliation_output.csv"
+```
+
+**Matching logic:** A Deposit line with `Description == "ACCOUNTABLE CASH"` has a `LinkedTxn.TxnId` pointing to an Invoice by its `Id`. Matched pairs are returned as JSON and also written to the CSV file.
+
+**Response fields per matched pair:**
+
+| Field | Description |
+|-------|-------------|
+| `invoiceId` | QBO Invoice ID |
+| `invoiceDocNumber` | Invoice document number |
+| `invoiceTxnDate` | Invoice transaction date |
+| `invoiceDueDate` | Invoice due date |
+| `invoiceCustomer` | Customer name on invoice |
+| `invoiceLocation` | Class/location on invoice |
+| `invoiceAccountableCash` | ACCOUNTABLE CASH line amount on invoice |
+| `depositId` | QBO Deposit ID |
+| `depositTxnDate` | Deposit transaction date |
+| `depositTotalAmount` | Total deposit amount |
+| `depositAccount` | Bank account name |
+| `accountableCashAmount` | ACCOUNTABLE CASH line amount in deposit |
+
 ### Health Check
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -311,6 +452,12 @@ curl "http://localhost:8080/api/4620816365331369327/deposits/by-date?from=2024-0
 
 # Custom query — invoices over $5000
 curl "http://localhost:8080/api/4620816365331369327/invoices/query?where=TotalAmt > '5000'"
+
+# Generate deposit JSON files from CSV
+curl "http://localhost:8080/api/csv/deposits/generate"
+
+# Reconcile a specific period
+curl "http://localhost:8080/api/reconcile?invoiceFile=data/prod/prod_invoices_260201-260208.json&depositFile=data/prod/prod_deposits_260201-260208.json&csvOutput=data/reconciliation_output.csv"
 ```
 
 ---
@@ -365,7 +512,7 @@ All endpoints return a consistent JSON structure:
 {
   "success": true,
   "count": 5,
-  "items": [ ... ],
+  "data": [ ... ],
   "timestamp": "2024-01-15T10:00:00Z"
 }
 ```
@@ -412,3 +559,6 @@ All endpoints return a consistent JSON structure:
 | `redirect_uri_mismatch` | Add `http://localhost:8080/api/auth/callback` to Intuit app's redirect URIs |
 | Tokens lost after restart | Implement database-backed `TokenStore` |
 | `502 Bad Gateway` in response | QBO API error — check logs for details |
+| Tests fail with JVM version error | Ensure `JAVA_HOME` points to JDK 21 when running `mvn test` |
+| CSV generate returns empty list | Verify `data/prod/prod_invoices_*.json` and `data/prod/classrefs.json` exist |
+| Reconcile returns 0 matches | Check deposit lines have `Description == "ACCOUNTABLE CASH"` with valid `LinkedTxn.TxnId` |

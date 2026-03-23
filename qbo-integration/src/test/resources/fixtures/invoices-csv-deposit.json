@@ -1,0 +1,44 @@
+{
+  "QueryResponse": {
+    "Invoice": [
+      {
+        "Id": "5001",
+        "DocNumber": "260101-1174",
+        "TxnDate": "2026-01-01",
+        "DueDate": "2026-01-31",
+        "CustomerRef": { "value": "42", "name": "AASMA Store 1174" },
+        "TotalAmt": 200.00,
+        "Balance": 0,
+        "Line": [
+          {
+            "Id": "15",
+            "Description": "ACCOUNTABLE CASH",
+            "Amount": -200.00,
+            "SalesItemLineDetail": {
+              "ClassRef": { "value": "4200000000000586342", "name": "1174 (Mchenry ave)" }
+            }
+          }
+        ]
+      },
+      {
+        "Id": "5002",
+        "DocNumber": "260102-1176",
+        "TxnDate": "2026-01-02",
+        "DueDate": "2026-01-31",
+        "CustomerRef": { "value": "44", "name": "AASMA Store 1176" },
+        "TotalAmt": 150.00,
+        "Balance": 0,
+        "Line": [
+          {
+            "Id": "16",
+            "Description": "ACCOUNTABLE CASH",
+            "Amount": -150.00,
+            "SalesItemLineDetail": {
+              "ClassRef": { "value": "4200000000000586344", "name": "1176 (Claribel Road)" }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

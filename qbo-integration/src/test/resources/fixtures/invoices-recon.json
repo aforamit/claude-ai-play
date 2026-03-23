@@ -1,0 +1,63 @@
+{
+  "QueryResponse": {
+    "Invoice": [
+      {
+        "Id": "1001",
+        "DocNumber": "260301-1174",
+        "TxnDate": "2026-03-01",
+        "DueDate": "2026-03-31",
+        "CustomerRef": { "value": "42", "name": "AASMA Store 1174" },
+        "TotalAmt": 100.00,
+        "Balance": 0,
+        "Line": [
+          {
+            "Id": "15",
+            "Description": "ACCOUNTABLE CASH",
+            "Amount": -100.00,
+            "SalesItemLineDetail": {
+              "ClassRef": { "value": "4200000000000586342", "name": "1174 (Mchenry ave)" }
+            }
+          }
+        ]
+      },
+      {
+        "Id": "1002",
+        "DocNumber": "260302-1177",
+        "TxnDate": "2026-03-02",
+        "DueDate": "2026-04-01",
+        "CustomerRef": { "value": "43", "name": "AASMA Store 1177" },
+        "TotalAmt": 200.00,
+        "Balance": 0,
+        "Line": [
+          {
+            "Id": "16",
+            "Description": "ACCOUNTABLE CASH",
+            "Amount": -200.00,
+            "SalesItemLineDetail": {
+              "ClassRef": { "value": "4200000000000586345", "name": "1177 (H Street)" }
+            }
+          }
+        ]
+      },
+      {
+        "Id": "1003",
+        "DocNumber": "260303-1176",
+        "TxnDate": "2026-03-03",
+        "DueDate": "2026-04-02",
+        "CustomerRef": { "value": "44", "name": "AASMA Store 1176" },
+        "TotalAmt": 300.00,
+        "Balance": 300.00,
+        "Line": [
+          {
+            "Id": "17",
+            "Description": "SALES",
+            "Amount": 300.00,
+            "SalesItemLineDetail": {
+              "ClassRef": { "value": "4200000000000586344", "name": "1176 (Claribel Road)" }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

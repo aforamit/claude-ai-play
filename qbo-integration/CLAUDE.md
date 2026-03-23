@@ -22,6 +22,7 @@
 - **Spring Boot 3.2** (web, actuator, RestClient)
 - **Jackson** (JSON, JSR-310 dates)
 - **Maven** build
+- **JUnit 5 + Mockito 5** (unit tests, integration tests — 164 tests, all passing)
 
 ### Key Design Decisions
 
@@ -38,6 +39,14 @@
    Handles token injection, URI building, QBO error parsing.
 
 5. **Multi-company support** — Every API call accepts a `realmId` path parameter.
+
+6. **CSV-to-JSON deposit pipeline** — `CsvDepositService` reads a bank deposit CSV,
+   enriches each row with invoice line data from local JSON files, and writes one
+   QBO deposit JSON file per row to an output directory.
+
+7. **Invoice–Deposit reconciliation** — `ReconciliationService` matches Invoices with
+   Deposits via `ACCOUNTABLE CASH` deposit lines (where `LinkedTxn.TxnId == Invoice.Id`),
+   returns matched pairs as JSON, and writes a CSV audit trail.
 
 ---
 
@@ -84,12 +93,41 @@ SELECT * FROM Account WHERE AccountType = 'Bank' AND Active = true
 
 ---
 
+## Local Data File Conventions
+
+The CSV deposit and reconciliation features use local JSON files — not live QBO API calls.
+These files are expected under the `data/` folder in the project root:
+
+```
+data/
+├── receipts/
+│   └── deposits.csv              ← Source CSV for CsvDepositService
+├── prod/
+│   ├── prod_invoices_*.json      ← Invoice exports from QBO (one file per period)
+│   ├── prod_deposits_*.json      ← Deposit exports from QBO
+│   ├── bank_accounts.json        ← QBO bank account list (Id + Name)
+│   └── classrefs.json            ← QBO class refs (store number + name)
+└── test/                         ← Output dir for generated deposit JSON files
+```
+
+### CSV Deposit Format (deposits.csv)
+```
+"Store","Account","Deposit Date","Balance Date","Deposit Amt","Balance Amt"
+"1174","*****1729","03-06-2026","03-01-2026","454.88","454.88"
+```
+- `Store` — matches the store number in `classrefs.json`
+- `Account` — matched against the masked account number in `bank_accounts.json`
+- `Balance Date` — used to look up the matching invoice by `DocNumber` (format `YYMMDD-StoreId`)
+
+---
+
 ## Windows 10 Deployment Notes
 
 - JDK 21: https://adoptium.net/temurin/releases/?version=21
 - Maven 3.9+: https://maven.apache.org/download.cgi
 - Run: `run.cmd` in project root
 - Credentials: set `QBO_CLIENT_ID` and `QBO_CLIENT_SECRET` as environment variables
+- Run tests: `JAVA_HOME="..." mvn test` (ensure JDK 21 is used for the forked test JVM)
 
 ---
 
@@ -97,39 +135,79 @@ SELECT * FROM Account WHERE AccountType = 'Bank' AND Active = true
 
 ```
 src/main/java/com/accounting/qbo/
-├── QboApplication.java           ← Spring Boot entry point
+├── QboApplication.java
 ├── auth/
-│   ├── OAuthToken.java           ← Record: token value object
-│   ├── TokenStore.java           ← Interface: token persistence
-│   ├── InMemoryTokenStore.java   ← Default: in-memory (replace for prod)
-│   └── QboOAuthService.java      ← OAuth 2.0 flow management
+│   ├── OAuthToken.java             ← Record: token value object
+│   ├── TokenStore.java             ← Interface: token persistence
+│   ├── InMemoryTokenStore.java     ← Default: in-memory (replace for prod)
+│   └── QboOAuthService.java        ← OAuth 2.0 flow management
 ├── client/
-│   └── QboApiClient.java         ← Single HTTP gateway to QBO API
+│   └── QboApiClient.java           ← Single HTTP gateway to QBO API
 ├── config/
-│   ├── QboProperties.java        ← @ConfigurationProperties: qbo.*
-│   └── AppConfig.java            ← Spring beans: RestClient, ObjectMapper
+│   ├── QboProperties.java          ← @ConfigurationProperties: qbo.*
+│   └── AppConfig.java              ← Spring beans: RestClient, ObjectMapper
 ├── controller/
-│   ├── AuthController.java       ← /api/auth/*
-│   ├── InvoiceController.java    ← /api/{realmId}/invoices/*
-│   ├── DepositController.java    ← /api/{realmId}/deposits/*
-│   └── AccountController.java   ← /api/{realmId}/accounts/*
+│   ├── HomeController.java         ← GET / — service info
+│   ├── AuthController.java         ← /api/auth/*
+│   ├── InvoiceController.java      ← /api/{realmId}/invoices/*
+│   ├── DepositController.java      ← /api/{realmId}/deposits/*
+│   ├── AccountController.java      ← /api/{realmId}/accounts/*
+│   ├── CsvDepositController.java   ← /api/csv/deposits/generate
+│   └── ReconciliationController.java ← /api/reconcile
 ├── dto/
-│   └── ApiResponse.java          ← Generic API response wrapper record
+│   ├── ApiResponse.java            ← Generic API response wrapper record
+│   └── MatchedTransaction.java     ← Invoice–Deposit match result
 ├── exception/
-│   ├── QboException.java         ← Runtime exception for QBO errors
+│   ├── QboException.java
 │   └── GlobalExceptionHandler.java ← @RestControllerAdvice
 ├── model/
-│   ├── EntityRef.java            ← Reusable QBO reference {id, name}
+│   ├── EntityRef.java              ← Reusable QBO reference {id, name}
 │   ├── Invoice.java / InvoiceLine.java
 │   ├── Deposit.java / DepositLine.java
 │   └── Account.java
 └── service/
-    ├── IQboEntityService.java    ← Generic root interface
-    ├── InvoiceService.java       ← Invoice-specific interface
-    ├── DepositService.java       ← Deposit-specific interface
-    ├── AccountService.java       ← Account-specific interface
+    ├── IQboEntityService.java      ← Generic root interface
+    ├── InvoiceService.java
+    ├── DepositService.java
+    ├── AccountService.java
+    ├── CsvDepositService.java      ← CSV→JSON deposit file generation
+    ├── ReconciliationService.java  ← Invoice–Deposit matching
     └── impl/
         ├── InvoiceServiceImpl.java
         ├── DepositServiceImpl.java
-        └── AccountServiceImpl.java
+        ├── AccountServiceImpl.java
+        ├── CsvDepositServiceImpl.java
+        └── ReconciliationServiceImpl.java
+
+src/test/java/com/accounting/qbo/       ← 164 tests, all passing
+├── QboApplicationTests.java
+├── auth/
+│   ├── OAuthTokenTest.java             ← 10 tests
+│   └── QboOAuthServiceTest.java        ← 18 tests
+├── client/
+│   └── QboApiClientTest.java           ← 14 tests
+├── config/
+│   └── QboPropertiesTest.java          ← 11 tests
+├── controller/
+│   ├── CsvDepositControllerIT.java     ← 8 integration tests (@SpringBootTest)
+│   └── ReconciliationControllerIT.java ← 7 integration tests (@SpringBootTest)
+├── dto/
+│   └── ApiResponseTest.java            ← 6 tests
+├── exception/
+│   └── GlobalExceptionHandlerTest.java ← 12 tests
+├── model/
+│   └── InvoiceTest.java                ← 9 tests
+└── service/impl/
+    ├── InvoiceServiceImplTest.java     ← 9 tests
+    ├── DepositServiceImplTest.java     ← 7 tests
+    ├── AccountServiceImplTest.java     ← 11 tests
+    ├── CsvDepositServiceImplTest.java  ← 22 tests
+    └── ReconciliationServiceImplTest.java ← 19 tests
+
+src/test/resources/fixtures/           ← Test data fixtures
+├── bank-accounts.json                  ← PineCrest Retail stores (3 accounts)
+├── classrefs.json                      ← PineCrest Retail class refs (3 stores)
+├── invoices-recon.json                 ← 3 invoices for reconciliation tests
+├── deposits-recon.json                 ← 4 deposits for reconciliation tests
+└── invoices-csv-deposit.json           ← Minimal invoices for CsvDeposit tests
 ```

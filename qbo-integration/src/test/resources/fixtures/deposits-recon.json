@@ -1,0 +1,63 @@
+{
+  "QueryResponse": {
+    "Deposit": [
+      {
+        "Id": "D001",
+        "TxnDate": "2026-03-06",
+        "DepositToAccountRef": { "value": "57", "name": "McHenry#1174 end_1729" },
+        "TotalAmt": 100.00,
+        "Line": [
+          {
+            "Description": "ACCOUNTABLE CASH",
+            "Amount": 100.00,
+            "LinkedTxn": [
+              { "TxnId": "1001", "TxnType": "Invoice" }
+            ]
+          }
+        ]
+      },
+      {
+        "Id": "D002",
+        "TxnDate": "2026-03-11",
+        "DepositToAccountRef": { "value": "52", "name": "H-Street#1177 end_2776" },
+        "TotalAmt": 200.00,
+        "Line": [
+          {
+            "Description": "ACCOUNTABLE CASH",
+            "Amount": 200.00,
+            "LinkedTxn": [
+              { "TxnId": "1002", "TxnType": "Invoice" }
+            ]
+          }
+        ]
+      },
+      {
+        "Id": "D003",
+        "TxnDate": "2026-03-12",
+        "DepositToAccountRef": { "value": "51", "name": "Riverbank#1176 end_2313" },
+        "TotalAmt": 50.00,
+        "Line": [
+          {
+            "Description": "ACCOUNTABLE CASH",
+            "Amount": 50.00,
+            "LinkedTxn": [
+              { "TxnId": "9999", "TxnType": "Invoice" }
+            ]
+          }
+        ]
+      },
+      {
+        "Id": "D004",
+        "TxnDate": "2026-03-13",
+        "DepositToAccountRef": { "value": "51", "name": "Riverbank#1176 end_2313" },
+        "TotalAmt": 75.00,
+        "Line": [
+          {
+            "Description": "OVER SHORT",
+            "Amount": 75.00
+          }
+        ]
+      }
+    ]
+  }
+}
