@@ -21,12 +21,14 @@ import com.google.api.services.gmail.model.MessagePart;
 import com.google.api.services.gmail.model.MessagePartBody;
 import com.google.api.services.gmail.model.MessagePartHeader;
 import com.google.api.services.gmail.model.ModifyMessageRequest;
+import com.google.api.services.gmail.model.SendAs;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.InputStreamReader;
+import java.util.Arrays;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -64,10 +66,14 @@ public class GmailEmailService implements EmailService {
             "image/gif", "image/tiff", "image/webp", "image/bmp"
     );
 
-    private final Gmail gmail;
+    private final Gmail        gmail;
+    private final List<String> accessibleAddresses;
+    private final List<String> recipientFilters;
 
-    private GmailEmailService(Gmail gmail) {
-        this.gmail = gmail;
+    private GmailEmailService(Gmail gmail, List<String> accessibleAddresses, List<String> recipientFilters) {
+        this.gmail               = gmail;
+        this.accessibleAddresses = accessibleAddresses;
+        this.recipientFilters    = recipientFilters;
     }
 
     /**
@@ -110,16 +116,65 @@ public class GmailEmailService implements EmailService {
                 .setApplicationName(APP_NAME)
                 .build();
 
+        List<String> addresses = discoverAccessibleAddresses(gmail);
+        List<String> recipientFilters = Arrays.stream(config.get("email.recipient-filter", "").split(","))
+                .map(String::trim)
+                .filter(s -> !s.isBlank())
+                .toList();
+
         log.info("Gmail authenticated successfully");
-        return new GmailEmailService(gmail);
+        log.info("Accessible email address(es): {}", addresses.size());
+        for (String addr : addresses) {
+            log.info("  - {}", addr);
+        }
+        if (!recipientFilters.isEmpty()) {
+            log.info("Recipient filter(s): {}", recipientFilters.size());
+            for (String f : recipientFilters) {
+                log.info("  - to:{}", f);
+            }
+        }
+        return new GmailEmailService(gmail, addresses, recipientFilters);
+    }
+
+    /**
+     * Queries the Gmail send-as settings to enumerate every email address accessible
+     * through the authenticated account (primary address + all configured aliases/delegates).
+     * Falls back to the profile email address if the settings API call fails.
+     */
+    private static List<String> discoverAccessibleAddresses(Gmail gmail) {
+        try {
+            List<SendAs> sendAsList = gmail.users().settings().sendAs().list(USER_ID).execute().getSendAs();
+            if (sendAsList != null && !sendAsList.isEmpty()) {
+                return sendAsList.stream()
+                        .map(SendAs::getSendAsEmail)
+                        .filter(addr -> addr != null && !addr.isBlank())
+                        .sorted()
+                        .toList();
+            }
+        } catch (Exception e) {
+            log.warn("Could not retrieve send-as addresses ({}); falling back to profile email.", e.getMessage());
+        }
+
+        // Fallback: use the primary address from the profile
+        try {
+            String primary = gmail.users().getProfile(USER_ID).execute().getEmailAddress();
+            return primary != null ? List.of(primary) : Collections.emptyList();
+        } catch (Exception e) {
+            log.warn("Could not retrieve profile email address: {}", e.getMessage());
+            return Collections.emptyList();
+        }
     }
 
     @Override
     public List<EmailMessage> fetchLatestUnreadWithImages(int maxResults) throws Exception {
         log.info("Querying Gmail for up to {} unread emails with attachments...", maxResults);
 
+        String toClause = recipientFilters.isEmpty() ? "" :
+                " {" + recipientFilters.stream().map(a -> "to:" + a).collect(java.util.stream.Collectors.joining(" ")) + "}";
+        String query = "is:unread has:attachment" + toClause;
+
         ListMessagesResponse response = gmail.users().messages().list(USER_ID)
-                .setQ("is:unread has:attachment")
+                .setQ(query)
                 .setMaxResults((long) maxResults)
                 .execute();
 
