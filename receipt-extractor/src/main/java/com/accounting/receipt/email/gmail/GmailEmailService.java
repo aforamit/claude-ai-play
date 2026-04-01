@@ -10,6 +10,7 @@ import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
+import com.google.api.client.http.HttpRequestInitializer;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.client.util.store.FileDataStoreFactory;
@@ -22,11 +23,14 @@ import com.google.api.services.gmail.model.MessagePartBody;
 import com.google.api.services.gmail.model.MessagePartHeader;
 import com.google.api.services.gmail.model.ModifyMessageRequest;
 import com.google.api.services.gmail.model.SendAs;
+import com.google.auth.http.HttpCredentialsAdapter;
+import com.google.auth.oauth2.ServiceAccountCredentials;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.Arrays;
 import java.nio.file.Files;
@@ -41,9 +45,11 @@ import java.util.Set;
 /**
  * Gmail implementation of {@link EmailService}.
  *
- * Authentication:
- *   - First run: opens browser for OAuth consent; token saved to disk.
- *   - Subsequent runs: token reloaded silently from disk.
+ * Authentication (two modes, selected automatically):
+ *   - Service account with domain-wide delegation: when {@code gmail.service-account.key-path}
+ *     is set and the file exists. Impersonates {@code gmail.impersonate-user} — no browser needed.
+ *   - Browser OAuth (fallback): when no service account key is configured. Opens a browser
+ *     on the first run; token is cached to disk for subsequent silent runs.
  *
  * Required setup: see SETUP_GUIDE.md
  */
@@ -78,43 +84,67 @@ public class GmailEmailService implements EmailService {
 
     /**
      * Factory method — builds an authenticated Gmail client.
-     * On first use the user will be prompted to authorise via browser.
+     *
+     * Selects auth mode based on config:
+     *   - If {@code gmail.service-account.key-path} points to an existing file →
+     *     service account with domain-wide delegation (impersonates {@code gmail.impersonate-user}).
+     *   - Otherwise → browser OAuth flow (token cached to disk after first login).
      */
     public static GmailEmailService create(AppConfig config) throws Exception {
-        String credentialsPath = config.get("gmail.credentials.path", "credentials.json");
-        String tokensPath      = config.get("gmail.tokens.path",       "tokens");
-        int    oauthPort       = config.getInt("gmail.oauth.port",      8888);
-
-        Path credFile = Paths.get(credentialsPath);
-        if (!Files.exists(credFile)) {
-            throw new FileNotFoundException(
-                    "Gmail credentials file not found: " + credFile.toAbsolutePath()
-                    + "\nDownload credentials.json from Google Cloud Console > APIs & Services > Credentials."
-                    + "\nSee SETUP_GUIDE.md for step-by-step instructions.");
-        }
-
         NetHttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();
 
-        GoogleClientSecrets clientSecrets;
-        try (var is = Files.newInputStream(credFile)) {
-            clientSecrets = GoogleClientSecrets.load(JSON, new InputStreamReader(is));
+        String serviceAccountKeyPath = config.get("gmail.service-account.key-path", "");
+        Path   serviceAccountKeyFile = Paths.get(serviceAccountKeyPath);
+
+        Gmail gmail;
+        if (!serviceAccountKeyPath.isBlank() && Files.exists(serviceAccountKeyFile)) {
+            // ── Service account with domain-wide delegation ──────────────
+            String impersonateUser = config.get("gmail.impersonate-user", "");
+            if (impersonateUser.isBlank()) {
+                throw new IllegalStateException(
+                        "gmail.impersonate-user must be set when using a service account key.");
+            }
+            log.info("Auth mode      : Service account (impersonating {})", impersonateUser);
+            try (InputStream is = Files.newInputStream(serviceAccountKeyFile)) {
+                ServiceAccountCredentials credentials = (ServiceAccountCredentials)
+                        ServiceAccountCredentials.fromStream(is)
+                                .createDelegated(impersonateUser)
+                                .createScoped(SCOPES);
+                HttpRequestInitializer requestInitializer = new HttpCredentialsAdapter(credentials);
+                gmail = new Gmail.Builder(transport, JSON, requestInitializer)
+                        .setApplicationName(APP_NAME)
+                        .build();
+            }
+        } else {
+            // ── Browser OAuth (fallback) ──────────────────────────────────
+            String credentialsPath = config.get("gmail.credentials.path", "credentials.json");
+            String tokensPath      = config.get("gmail.tokens.path",       "tokens");
+            int    oauthPort       = config.getInt("gmail.oauth.port",      8888);
+
+            Path credFile = Paths.get(credentialsPath);
+            if (!Files.exists(credFile)) {
+                throw new FileNotFoundException(
+                        "Gmail credentials file not found: " + credFile.toAbsolutePath()
+                        + "\nSet gmail.service-account.key-path for service account auth, or"
+                        + "\ndownload credentials.json from Google Cloud Console > APIs & Services > Credentials.");
+            }
+            log.info("Auth mode      : Browser OAuth ({})", credentialsPath);
+            GoogleClientSecrets clientSecrets;
+            try (var is = Files.newInputStream(credFile)) {
+                clientSecrets = GoogleClientSecrets.load(JSON, new InputStreamReader(is));
+            }
+            GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
+                    transport, JSON, clientSecrets, SCOPES)
+                    .setDataStoreFactory(new FileDataStoreFactory(new File(tokensPath)))
+                    .setAccessType("offline")
+                    .build();
+            LocalServerReceiver receiver = new LocalServerReceiver.Builder()
+                    .setPort(oauthPort).build();
+            Credential credential = new AuthorizationCodeInstalledApp(flow, receiver).authorize("user");
+            gmail = new Gmail.Builder(transport, JSON, credential)
+                    .setApplicationName(APP_NAME)
+                    .build();
         }
-
-        GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
-                transport, JSON, clientSecrets, SCOPES)
-                .setDataStoreFactory(new FileDataStoreFactory(new File(tokensPath)))
-                .setAccessType("offline")
-                .build();
-
-        LocalServerReceiver receiver = new LocalServerReceiver.Builder()
-                .setPort(oauthPort)
-                .build();
-
-        Credential credential = new AuthorizationCodeInstalledApp(flow, receiver).authorize("user");
-
-        Gmail gmail = new Gmail.Builder(transport, JSON, credential)
-                .setApplicationName(APP_NAME)
-                .build();
 
         List<String> addresses = discoverAccessibleAddresses(gmail);
         List<String> recipientFilters = Arrays.stream(config.get("email.recipient-filter", "").split(","))

@@ -42,6 +42,13 @@
             <version>1.34.1</version>
         </dependency>
 
+        <!-- Service account credentials + HTTP adapter (for domain-wide delegation) -->
+        <dependency>
+            <groupId>com.google.auth</groupId>
+            <artifactId>google-auth-library-oauth2-http</artifactId>
+            <version>1.23.0</version>
+        </dependency>
+
         <!-- ===== JSON Processing ===== -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
